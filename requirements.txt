@@ -1,0 +1,10 @@
+torch
+torchvision
+transformers
+faiss-gpu
+Pillow
+pandas
+numpy
+matplotlib
+tqdm
+huggingface_hub

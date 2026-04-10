@@ -1,0 +1,20 @@
+# Data & archives
+*.tar.gz
+*.zip
+*.pkl
+*.pt
+*.pth
+
+# Jupyter
+.ipynb_checkpoints/
+*.pyc
+__pycache__/
+
+# Runtime outputs (too large for git)
+results/
+visualizations/
+models/
+data/
+
+# Colab/env
+.env
