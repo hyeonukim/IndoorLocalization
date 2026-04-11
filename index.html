@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>PLY Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #111;
+      color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 16px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      flex-shrink: 0;
+    }
+
+    #file-input { display: none; }
+
+    #open-btn {
+      background: #eee;
+      color: #111;
+      border: none;
+      padding: 6px 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+
+    #open-btn:hover { background: #fff; }
+
+    #file-name {
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    .sep { width: 1px; height: 20px; background: #333; }
+
+    label { font-size: 0.8rem; color: #aaa; display: flex; align-items: center; gap: 6px; }
+    input[type=range] { width: 80px; accent-color: #eee; cursor: pointer; }
+
+    #canvas-wrap {
+      flex: 1;
+      position: relative;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #hint {
+      position: absolute;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      color: #444;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      color: #444;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="open-btn" onclick="document.getElementById('file-input').click()">Open .ply</button>
+  <input type="file" id="file-input" accept=".ply"/>
+  <span id="file-name">no file loaded</span>
+  <div class="sep"></div>
+  <label>Point size <input type="range" id="pt-size" min="0.5" max="8" step="0.5" value="2"/></label>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="canvas"></canvas>
+  <div id="empty">Open a .ply file to get started</div>
+  <div id="hint">drag to rotate &nbsp;·&nbsp; scroll to zoom &nbsp;·&nbsp; right-drag to pan</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const canvas   = document.getElementById('canvas');
+const wrap     = document.getElementById('canvas-wrap');
+const emptyMsg = document.getElementById('empty');
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setClearColor(0x111111);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.001, 100000);
+
+function resize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+resize();
+new ResizeObserver(resize).observe(wrap);
+
+// Orbit
+let drag = false, rightDrag = false, px = 0, py = 0;
+let sph = { theta: 0.4, phi: 1.1, r: 5 };
+let target = new THREE.Vector3();
+
+function updateCam() {
+  camera.position.set(
+    target.x + sph.r * Math.sin(sph.phi) * Math.sin(sph.theta),
+    target.y + sph.r * Math.cos(sph.phi),
+    target.z + sph.r * Math.sin(sph.phi) * Math.cos(sph.theta)
+  );
+  camera.lookAt(target);
+}
+updateCam();
+
+canvas.addEventListener('mousedown', e => { drag = true; rightDrag = e.button === 2; px = e.clientX; py = e.clientY; });
+window.addEventListener('mouseup', () => drag = false);
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const dx = e.clientX - px, dy = e.clientY - py;
+  px = e.clientX; py = e.clientY;
+  if (rightDrag) {
+    const s = 0.002 * sph.r;
+    const right = new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
+    target.addScaledVector(right, -dx * s);
+    target.addScaledVector(camera.up, dy * s);
+  } else {
+    sph.theta -= dx * 0.005;
+    sph.phi = Math.max(0.05, Math.min(Math.PI - 0.05, sph.phi + dy * 0.005));
+  }
+  updateCam();
+});
+canvas.addEventListener('wheel', e => { sph.r = Math.max(0.01, sph.r * (1 + e.deltaY * 0.001)); updateCam(); }, { passive: true });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Drop on canvas
+wrap.addEventListener('dragover', e => e.preventDefault());
+wrap.addEventListener('drop', e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); });
+
+// PLY parser
+function parsePLY(buf) {
+  const bytes = new Uint8Array(buf);
+  let hi = -1;
+  for (let i = 0; i < bytes.length - 10; i++) {
+    if (bytes[i]===101&&bytes[i+1]===110&&bytes[i+2]===100&&bytes[i+3]===95&&bytes[i+4]===104) {
+      hi = i; while (hi < bytes.length && bytes[hi] !== 10) hi++; hi++; break;
+    }
+  }
+  if (hi < 0) throw new Error('Invalid PLY');
+
+  const dec    = new TextDecoder();
+  const header = dec.decode(bytes.slice(0, hi));
+  const lines  = header.split('\n').map(l => l.trim()).filter(Boolean);
+
+  let nv = 0, binary = false, be = false;
+  const props = [];
+  for (const l of lines) {
+    if (l.startsWith('format'))         { binary = l.includes('binary'); be = l.includes('big_endian'); }
+    if (l.startsWith('element vertex')) nv = parseInt(l.split(' ')[2]);
+    if (l.startsWith('property'))       { const p = l.split(' '); props.push({ type: p[1], name: p[2] }); }
+  }
+
+  const pnames = props.map(p => p.name);
+  const hasColor = pnames.includes('red') || pnames.includes('diffuse_red');
+  const rn = pnames.includes('red') ? 'red' : 'diffuse_red';
+  const gn = pnames.includes('green') ? 'green' : 'diffuse_green';
+  const bn = pnames.includes('blue')  ? 'blue'  : 'diffuse_blue';
+
+  const pos = new Float32Array(nv * 3);
+  const col = new Float32Array(nv * 3);
+
+  const tsz = { char:1,uchar:1,short:2,ushort:2,int:4,uint:4,float:4,double:8 };
+
+  if (binary) {
+    const stride = props.reduce((s,p) => s + (tsz[p.type]||4), 0);
+    const view   = new DataView(buf, hi);
+    const le     = !be;
+    for (let i = 0; i < nv; i++) {
+      let off = i * stride, v = {};
+      for (const p of props) {
+        const s = tsz[p.type]||4;
+        switch(p.type) {
+          case 'float':  v[p.name] = view.getFloat32(off,le); break;
+          case 'double': v[p.name] = view.getFloat64(off,le); break;
+          case 'uchar':  v[p.name] = view.getUint8(off); break;
+          case 'int':    v[p.name] = view.getInt32(off,le); break;
+          case 'uint':   v[p.name] = view.getUint32(off,le); break;
+          default:       v[p.name] = view.getFloat32(off,le);
+        }
+        off += s;
+      }
+      pos[i*3]=v.x||0; pos[i*3+1]=v.y||0; pos[i*3+2]=v.z||0;
+      if (hasColor) { col[i*3]=v[rn]/255; col[i*3+1]=v[gn]/255; col[i*3+2]=v[bn]/255; }
+    }
+  } else {
+    const body  = dec.decode(bytes.slice(hi));
+    const vlines = body.trim().split('\n').slice(0, nv);
+    const xi=pnames.indexOf('x'), yi=pnames.indexOf('y'), zi=pnames.indexOf('z');
+    const ri=pnames.indexOf(rn), gi=pnames.indexOf(gn), bi2=pnames.indexOf(bn);
+    for (let i = 0; i < vlines.length; i++) {
+      const v = vlines[i].trim().split(/\s+/);
+      pos[i*3]=+v[xi]||0; pos[i*3+1]=+v[yi]||0; pos[i*3+2]=+v[zi]||0;
+      if (hasColor && ri>=0) { col[i*3]=+v[ri]/255; col[i*3+1]=+v[gi]/255; col[i*3+2]=+v[bi2]/255; }
+    }
+  }
+
+  if (!hasColor) col.fill(0.75);
+  return { pos, col, nv };
+}
+
+let cloud = null;
+
+function loadCloud(data) {
+  if (cloud) { scene.remove(cloud); cloud.geometry.dispose(); cloud.material.dispose(); }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(data.pos, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(data.col, 3));
+  geo.computeBoundingSphere();
+
+  const mat = new THREE.PointsMaterial({
+    size: parseFloat(document.getElementById('pt-size').value) * 0.01,
+    vertexColors: true,
+    sizeAttenuation: true,
+  });
+
+  cloud = new THREE.Points(geo, mat);
+  scene.add(cloud);
+
+  target.copy(geo.boundingSphere.center);
+  sph.r = geo.boundingSphere.radius * 2.5;
+  sph.theta = 0.4; sph.phi = 1.1;
+  updateCam();
+  emptyMsg.style.display = 'none';
+}
+
+function handleFile(file) {
+  if (!file || !file.name.endsWith('.ply')) return;
+  document.getElementById('file-name').textContent = file.name;
+  const r = new FileReader();
+  r.onload = e => { try { loadCloud(parsePLY(e.target.result)); } catch(err) { alert('Could not parse PLY: ' + err.message); } };
+  r.readAsArrayBuffer(file);
+}
+
+document.getElementById('file-input').addEventListener('change', e => handleFile(e.target.files[0]));
+document.getElementById('pt-size').addEventListener('input', e => { if (cloud) cloud.material.size = +e.target.value * 0.01; });
+
+(function loop() { requestAnimationFrame(loop); renderer.render(scene, camera); })();
+</script>
+</body>
+</html>
