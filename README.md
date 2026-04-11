@@ -87,6 +87,6 @@ huggingface_hub
 
 | Member | Role | Responsibilities |
 |--------|------|-----------------|
-| **Hyeonu (Eric) Kim** | TBD | TBD |
-| **Jacky Chen** | TBD | TBD |
-| **Henry Chen** | TBD | TBD |
+| **Hyeonu (Eric) Kim** | Model & Demo Lead | VGGT re-ranking pipeline, live demo script, general paper contributions |
+| **Jacky Chen** | Retrieval Lead | DINOv2 retrieval, FAISS indexing, general paper contributions |
+| **Henry Chen** | Training & Visualization Lead | VGGT fine-tuning, PLY visualizer, general paper contributions |
